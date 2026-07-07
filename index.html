@@ -1,60 +1,157 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portal de Relatórios - Educação e Mobilidade</title>
+    <title>Telemetria Veicular - Autoescola</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #eef2f7; }
-        .caixa-login { background: white; padding: 35px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); text-align: center; width: 320px; }
-        h2 { color: #1a73e8; margin-bottom: 20px; }
-        input { padding: 12px; width: 100%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-        button { padding: 12px; width: 100%; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #1557b0; }
-        #area-relatorio { display: none; width: 100%; height: 100vh; position: fixed; top: 0; left: 0; background: white; }
-        iframe { width: 100%; height: 100%; border: none; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #121214; color: #e1e1e6; text-align: center; padding: 20px; }
+        .container { background: #202024; padding: 30px; border-radius: 12px; max-width: 450px; margin: 0 auto; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        
+        .status-badge { display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 14px; margin-bottom: 20px; }
+        .status-off { background: #29292e; color: #a8a8b3; }
+        .status-on { background: #015f43; color: #00b37e; animation: pulse 2s infinite; }
+        
+        .info { font-size: 18px; margin: 20px 0; background: #29292e; padding: 15px; border-radius: 6px; text-align: left; line-height: 1.6; }
+        .time-box { color: #00b37e; font-weight: bold; }
+        
+        .row-botoes { display: flex; gap: 10px; margin-top: 20px; }
+        button { font-size: 16px; font-weight: bold; padding: 16px; flex: 1; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s; color: white; }
+        
+        .btn-start { background: #00875f; }
+        .btn-start:disabled { background: #29292e; color: #7c7c8a; cursor: not-allowed; }
+        .btn-stop { background: #aa2834; }
+        .btn-stop:disabled { background: #29292e; color: #7c7c8a; cursor: not-allowed; }
+        
+        #map-log { background: #121214; border-radius: 6px; padding: 15px; height: 180px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #7c7c8a; text-align: left; margin-top: 15px; border: 1px solid #29292e; }
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
     </style>
 </head>
 <body>
 
-<div id="login-container" class="caixa-login">
-    <h2>Acesso ao Portal</h2>
-    <input type="text" id="usuario" placeholder="Usuário (Ex: CPF)">
-    <input type="password" id="senha" placeholder="Senha">
-    <button onclick="entrar()">Entrar no Dashboard</button>
-</div>
+<div class="container">
+    <h2>Registro de Aula Prática</h2>
+    <div id="statusBadge" class="status-badge status-off">AGUARDANDO INÍCIO</div>
+    
+    <div class="info">
+        <div>🕐 <b>Horário de Início:</b> <span id="txtInicio" class="time-box">--:--:--</span></div>
+        <div>🏁 <b>Horário de Término:</b> <span id="txtFim" class="time-box">--:--:--</span></div>
+        <hr style="border: 0; border-top: 1px solid #323238; margin: 10px 0;">
+        <div>📍 <b>Pontos Gravados:</b> <span id="txtPontos">0</span></div>
+        <div>🎯 <b>Precisão do GPS:</b> <span id="txtPrecisao">--</span></div>
+    </div>
 
-<div id="area-relatorio">
-    <iframe id="meu-iframe" src=""></iframe>
+    <div class="row-botoes">
+        <button id="btnIniciar" class="btn-start" onclick="iniciarAula()">INICIAR AULA</button>
+        <button id="btnFinalizar" class="btn-stop" onclick="finalizarAula()" disabled>FINALIZAR AULA</button>
+    </div>
+
+    <div id="map-log">O histórico do percurso aparecerá aqui em tempo real...</div>
 </div>
 
 <script>
-    // --- CADASTRO DE USUÁRIOS E LINKS DO LOOKER STUDIO ---
-    const dadosAcesso = {
-        "instrutor01": {
-            "senha": "123",
-            "link": "https://datastudio.google.com/embed/reporting/5bd90104-bb6f-4cb6-921a-23dec39b944b/page/p_cwztlvuwpd"
-        },
-        "aluno_teste": {
-            "senha": "456",
-            "link": "https://datastudio.google.com/embed/reporting/5bd90104-bb6f-4cb6-921a-23dec39b944b/page/p_cwztlvuwpd"
-        }
+    let geoWatchId = null;
+    let wakeLock = null;
+    let dadosRota = [];
+    let horarioAberturaMetadado = null;
+
+    const opcoesGps = {
+        enableHighAccuracy: true, 
+        maximumAge: 0,            
+        timeout: 5000             
     };
 
-    function entrar() {
-        const user = document.getElementById('usuario').value.toLowerCase();
-        const pass = document.getElementById('senha').value;
-        const iframe = document.getElementById('meu-iframe');
-        const loginDiv = document.getElementById('login-container');
-        const relatorioDiv = document.getElementById('area-relatorio');
-
-        if (dadosAcesso[user] && dadosAcesso[user].senha === pass) {
-            iframe.src = dadosAcesso[user].link;
-            loginDiv.style.display = 'none';
-            relatorioDiv.style.display = 'block';
-        } else {
-            alert("Usuário ou senha incorretos!");
+    async function iniciarAula() {
+        if (!navigator.geolocation) {
+            alert("Erro: Este celular não possui ou bloqueou o suporte a GPS.");
+            return;
         }
+
+        // Configura Interface e Horário de Início
+        const agora = new Date();
+        horarioAberturaMetadado = agora.toISOString();
+        document.getElementById('txtInicio').innerText = agora.toLocaleTimeString();
+        document.getElementById('txtFim').innerText = "--:--:--";
+        document.getElementById('txtPontos').innerText = "0";
+        document.getElementById('map-log').innerHTML = "Buscando satélites... Movimente o veículo.<br>";
+
+        // Gerencia botões
+        document.getElementById('btnIniciar').disabled = true;
+        document.getElementById('btnFinalizar').disabled = false;
+        
+        const badge = document.getElementById('statusBadge');
+        badge.innerText = "🔴 GRAVANDO PERCURSO";
+        badge.className = "status-badge status-on";
+
+        // Força a tela a ficar ligada direto (Se suportado pelo navegador)
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+            }
+        } catch (err) {
+            console.log("WakeLock não ativado:", err.message);
+        }
+
+        // Ativa o GPS direto
+        dadosRota = [];
+        geoWatchId = navigator.geolocation.watchPosition(capturarPonto, erroGps, opcoesGps);
+    }
+
+    function finalizarAula() {
+        const agora = new Date();
+        document.getElementById('txtFim').innerText = agora.toLocaleTimeString();
+
+        // Reseta botões e Badge
+        document.getElementById('btnIniciar').disabled = false;
+        document.getElementById('btnFinalizar').disabled = true;
+        
+        const badge = document.getElementById('statusBadge');
+        badge.innerText = "AULA CONCLUÍDA";
+        badge.className = "status-badge status-off";
+
+        // Desliga o GPS e libera a tela
+        if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
+        if (wakeLock !== null) {
+            wakeLock.release();
+            wakeLock = null;
+        }
+
+        // Monta o JSON final com os horários de início, fim e a rota
+        const relatorioFinal = {
+            aula_inicio: horarioAberturaMetadado,
+            aula_fim: agora.toISOString(),
+            total_pontos: dadosRota.length,
+            coordenadas: dadosRota
+        };
+
+        console.log("=== RELATÓRIO DA AULA PRÁTICA ===", relatorioFinal);
+        alert(`Aula encerrada com sucesso!\nInício: ${document.getElementById('txtInicio').innerText}\nFim: ${document.getElementById('txtFim').innerText}\nPontos: ${dadosRota.length}`);
+    }
+
+    function capturarPonto(posicao) {
+        const ponto = {
+            lat: posicao.coords.latitude,
+            lng: posicao.coords.longitude,
+            velocidade: posicao.coords.speed ? (posicao.coords.speed * 3.6).toFixed(1) : 0, 
+            precisao: posicao.coords.accuracy.toFixed(1),
+            horario: new Date().toLocaleTimeString()
+        };
+
+        // Salva se a precisão for boa (menos de 25 metros de margem de erro)
+        if (posicao.coords.accuracy < 25) {
+            dadosRota.push(ponto);
+            
+            document.getElementById('txtPontos').innerText = dadosRota.length;
+            document.getElementById('txtPrecisao').innerText = ponto.precisao + "m";
+            
+            const logDiv = document.getElementById('map-log');
+            logDiv.innerHTML += `📍 [${ponto.horario}] Lat: ${ponto.lat.toFixed(6)} | Vel: ${ponto.velocidade} Km/h<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+    }
+
+    function erroGps(erro) {
+        console.warn(`Sinal instável: ${erro.message}`);
     }
 </script>
 
